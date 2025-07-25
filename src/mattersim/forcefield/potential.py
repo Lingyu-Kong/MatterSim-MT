@@ -773,6 +773,7 @@ class Potential(nn.Module):
                     input, dataset_idx, return_intermediate
                 )
                 output["intermediate"] = intermediate
+                return output
             else:
                 energies, energies_i = self.model.forward(input, dataset_idx, return_intermediate, return_energies_per_atom=True)
                 if root_indices_mask is None:
