@@ -16,7 +16,7 @@ import torch.distributed
 import torch.nn as nn
 from ase import Atoms
 from ase.calculators.calculator import Calculator
-from ase.constraints import full_3x3_to_voigt_6_stress
+from ase.stress import full_3x3_to_voigt_6_stress
 from ase.units import GPa
 from deprecated import deprecated
 from loguru import logger
@@ -111,6 +111,11 @@ class Potential(nn.Module):
 
         self.use_finetune_label_loss = kwargs.get("use_finetune_label_loss", False)
 
+        
+        ## NOTE: MatterTune: Added Ewald parameters to Potential class for long-range electrostatics correction
+        ## The initialization and setting of this ewald_plugin will be handled in the corresponding model class in MatterTune
+        self.ewald_plugin = None
+        
     def freeze_reset_model(
         self,
         finetune_layers: int = -1,
@@ -729,7 +734,6 @@ class Potential(nn.Module):
         include_forces: bool = True,
         include_stresses: bool = True,
         dataset_idx: int = -1,
-        return_intermediate: bool = False,
         root_indices_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
@@ -768,23 +772,28 @@ class Potential(nn.Module):
                 )
                 volume = torch.linalg.det(input["cell"])
 
-            if return_intermediate:
-                energies, intermediate = self.model.forward(
-                    input, dataset_idx, return_intermediate
-                )
-                output["intermediate"] = intermediate
-                return output
+            energies, energies_i, internal_attrs = self.model.forward(input, dataset_idx)
+            if root_indices_mask is None:
+                output["total_energy"] = energies
             else:
-                energies, energies_i = self.model.forward(input, dataset_idx, return_intermediate, return_energies_per_atom=True)
-                if root_indices_mask is None:
-                    output["total_energy"] = energies
-                else:
-                    batch = input["batch"]
-                    num_graphs = input["num_graphs"]
-                    energies = scatter(energies_i * root_indices_mask, batch, dim=0, dim_size=num_graphs)
-                    output["total_energy"] = energies
+                batch = input["batch"]
+                num_graphs = input["num_graphs"]
+                energies = scatter(energies_i * root_indices_mask, batch, dim=0, dim_size=num_graphs)
+                output["total_energy"] = energies
             output["total_energy_i"] = energies_i
-
+                
+            ## NOTE: MatterTune: If ewald_plugin is defined, add long-range electrostatics correction to the total energy
+            if self.ewald_plugin is not None:
+                latent_q, E_ewald = self.ewald_plugin(
+                    positions=input["atom_pos"],
+                    cell=input["cell"],
+                    batch=input["batch"],
+                    node_features=internal_attrs[f"node_attr_{self.model.num_blocks-1}"],
+                )
+                internal_attrs["latent_charges"] = latent_q
+                energies += E_ewald
+                output["total_energy"] = energies
+                
             # Only take first derivative if only force is required
             if include_forces is True and include_stresses is False:
                 grad_outputs: List[Optional[torch.Tensor]] = [

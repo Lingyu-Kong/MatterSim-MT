@@ -75,8 +75,7 @@ class M3Gnet(nn.Module):
         input: Dict[str, torch.Tensor],
         dataset_idx: int = -1,
         return_intermediate: bool = False,
-        return_energies_per_atom: bool = False,
-    ) -> torch.Tensor:
+    ):
         # Exact data from input_dictionary
         pos = input["atom_pos"]
         cell = input["cell"]
@@ -125,11 +124,10 @@ class M3Gnet(nn.Module):
         edge_attr_zero = edge_attr  # e_ij^0
         edge_attr = self.edge_encoder(edge_attr)
         three_basis = self.sbf(triple_edge_length, torch.acos(cos_jik))
-        if return_intermediate:
-            internal_attrs = {
-                "node_emb": atom_attr.clone(),
-                "edge_emb": edge_attr.clone(),
-            }
+        internal_attrs = {
+            "node_emb": atom_attr.clone(),
+            "edge_emb": edge_attr.clone(),
+        }
 
         # Main Loop
         for i in range(self.num_blocks):
@@ -145,9 +143,8 @@ class M3Gnet(nn.Module):
                 num_triple_ij,
                 num_atoms,
             )
-            if return_intermediate:
-                internal_attrs[f"node_attr_{i}"] = atom_attr.clone()
-                internal_attrs[f"edge_attr_{i}"] = edge_attr.clone()
+            internal_attrs[f"node_attr_{i}"] = atom_attr.clone()
+            internal_attrs[f"edge_attr_{i}"] = edge_attr.clone()
         # for idx, conv in enumerate(self.graph_conv):
         #     atom_attr, edge_attr = conv(
         #         atom_attr,
@@ -164,17 +161,12 @@ class M3Gnet(nn.Module):
         #     if return_intermediate:
         #         internal_attrs[f"node_attr_{idx}"] = atom_attr.clone()
         #         internal_attrs[f"edge_attr_{idx}"] = edge_attr.clone()
-
+        
         energies_i = self.final(atom_attr).view(-1)  # [batch_size*num_atoms]
         energies_i = self.normalizer(energies_i, atomic_numbers)
         energies = scatter(energies_i, batch, dim=0, dim_size=num_graphs)
 
-        if return_intermediate:
-            return energies, internal_attrs
-        else:
-            if return_energies_per_atom:
-                return energies, energies_i
-            return energies  # [batch_size]
+        return energies, energies_i, internal_attrs
 
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
