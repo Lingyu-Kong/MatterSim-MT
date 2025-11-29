@@ -79,7 +79,7 @@ class M3Gnet(nn.Module):
         # Exact data from input_dictionary
         pos = input["atom_pos"]
         cell = input["cell"]
-        pbc_offsets = input["pbc_offsets"].float()
+        pbc_offsets = input["pbc_offsets"]
         atom_attr = input["atom_attr"]
         edge_index = input["edge_index"].long()
         three_body_indices = input["three_body_indices"].long()
@@ -119,7 +119,7 @@ class M3Gnet(nn.Module):
         atomic_numbers = atom_attr.squeeze(1).long()
 
         # featurize
-        atom_attr = self.atom_embedding(self.one_hot_atoms(atomic_numbers))
+        atom_attr = self.atom_embedding(self.one_hot_atoms(atomic_numbers, atom_attr.dtype))
         edge_attr = self.rbf(edge_length.view(-1))
         edge_attr_zero = edge_attr  # e_ij^0
         edge_attr = self.edge_encoder(edge_attr)
@@ -177,16 +177,8 @@ class M3Gnet(nn.Module):
             torch.nn.init.uniform_(m.weight, a=-0.05, b=0.05)
 
     @torch.jit.export
-    def one_hot_atoms(self, species):
-        # one_hots = []
-        # for i in range(species.shape[0]):
-        #     one_hots.append(
-        #         F.one_hot(
-        #             species[i],
-        #             num_classes=self.max_z+1).float().to(species.device)
-        #     )
-        # return torch.cat(one_hots, dim=0)
-        return F.one_hot(species, num_classes=self.max_z + 1).float()
+    def one_hot_atoms(self, species, dtype):
+        return F.one_hot(species, num_classes=self.max_z + 1).to(dtype)
 
     def print(self):
         from prettytable import PrettyTable
